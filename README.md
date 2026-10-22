@@ -236,11 +236,9 @@ Les captures présentes dans `captures/` documentent les premières vérificatio
 7. `07-procedure-virement.png` — procédure de virement.
 8. `08-securite-procedure.png` — tests de sécurité de la procédure.
 
-Les nouvelles preuves de performance, de restauration et des tests complémentaires seront ajoutées après leur exécution.
-
 ## 10. Utilisation de l'intelligence artificielle
 
-Une assistance par IA a été utilisée pour expliquer les concepts PostgreSQL, proposer et relire des scripts, diagnostiquer des erreurs et organiser les vérifications. Les commandes et les résultats doivent être contrôlés dans l'environnement de travail avant d'être présentés comme validés.
+Une assistance par IA a été utilisée pour expliquer les concepts PostgreSQL, diagnostiquer des erreurs et organiser les vérifications. 
 
 ## 11. Livrables
 
@@ -248,4 +246,3 @@ Une assistance par IA a été utilisée pour expliquer les concepts PostgreSQL, 
 - Scripts Bash d'installation et de reconstruction.
 - README et schéma relationnel.
 - Captures d'écran des vérifications.
-- Résultats des tests, mesures de performance et preuve de restauration.
