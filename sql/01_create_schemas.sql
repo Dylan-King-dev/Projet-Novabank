@@ -1,0 +1,3 @@
+CREATE SCHEMA core AUTHORIZATION bank_owner;
+
+CREATE SCHEMA audit AUTHORIZATION bank_owner;
