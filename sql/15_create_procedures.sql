@@ -93,6 +93,16 @@ BEGIN
 END;
 $$;
 
+ALTER PROCEDURE core.execute_transfer(BIGINT, BIGINT, NUMERIC)
+	SECURITY DEFINER;
+
+ALTER PROCEDURE core.execute_transfer(BIGINT, BIGINT, NUMERIC)
+	SET search_path TO pg_catalog, core, audit;
+
+GRANT EXECUTE ON PROCEDURE
+	core.execute_transfer(BIGINT, BIGINT, NUMERIC)
+TO app;
+
 REVOKE ALL ON PROCEDURE
     core.execute_transfer(BIGINT, BIGINT, NUMERIC)
 FROM PUBLIC;
