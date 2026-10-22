@@ -1,18 +1,21 @@
+
 # NovaBank Core
 
-Projet de conception et d'administration d'une base de données PostgreSQL pour une banque en ligne fictive, réalisé dans le cadre du Bachelor 2 Informatique.
+Projet de conception, de sécurisation et d'administration d'une base de données PostgreSQL pour une banque en ligne fictive. Projet réalisé dans le cadre du Bachelor 2 Informatique.
 
-## Objectifs
+## 1. Objectifs
 
-- Structurer les données bancaires avec PostgreSQL.
+- Structurer les données bancaires et garantir leur cohérence.
 - Gérer les rôles, les privilèges et les accès aux données.
-- Masquer certaines informations personnelles.
+- Masquer les informations personnelles accessibles au support.
 - Journaliser les modifications sensibles.
-- Protéger le registre des transactions.
+- Protéger le journal comptable contre les modifications, suppressions et TRUNCATE.
 - Détecter certaines opérations potentiellement frauduleuses.
-- Exécuter des virements et maintenir la cohérence des soldes.
+- Exécuter des virements de manière contrôlée.
+- Étudier les performances des requêtes et des index.
+- Vérifier les sauvegardes par une restauration.
 
-## Environnement technique
+## 2. Environnement technique
 
 - Ubuntu Server
 - PostgreSQL 18
@@ -20,11 +23,12 @@ Projet de conception et d'administration d'une base de données PostgreSQL pour 
 - Bash
 - Git et GitHub
 
-## Structure du projet
+## 3. Structure du projet
 
 ```text
 novabank/
 ├── scripts/
+│   ├── 00_tout_refaire.sh
 │   └── 01_install_postgresql.sh
 ├── sql/
 │   ├── 00_create_database.sql
@@ -43,70 +47,205 @@ novabank/
 │   ├── 13_fraud_alert_trigger.sql
 │   ├── 14_balance_trigger.sql
 │   └── 15_create_procedures.sql
+├── captures/
+│   ├── 01-tables-core.png
+│   ├── 02-roles-postgresql.png
+│   ├── 03-permissions-tables.png
+│   ├── 04-audit-log.png
+│   ├── 05-transactions-triggers.png
+│   ├── 06-vues-securite.png
+│   ├── 07-procedure-virement.png
+│   └── 08-securite-procedure.png
 └── README.md
 ```
 
-## Architecture de la base de données
+## 4. Architecture de la base de données
 
-Le projet utilise deux schémas principaux :
+La base utilise deux schémas : `core` pour les données métier et `audit` pour le journal d'audit.
 
-- `core` : données clients, comptes, transactions, virements et alertes antifraude.
-- `audit` : journal des modifications apportées aux données sensibles.
+### Schéma relationnel
 
-Les scripts SQL numérotés organisent la création de la base, la préparation des données, la gestion des permissions et l'implémentation des mécanismes métier.
+```mermaid
 
-## Sécurité et contrôle des accès
+erDiagram
+    CUSTOMERS ||--o{ ACCOUNTS : owns
+    ACCOUNTS ||--o{ TRANSACTIONS : records
+    ACCOUNTS ||--o{ TRANSFERS : sends
+    ACCOUNTS ||--o{ TRANSFERS : receives
+    TRANSFERS o|--o{ TRANSACTIONS : generates
+    ACCOUNTS ||--o{ FRAUD_ALERTS : triggers
+    TRANSACTIONS o|--o{ FRAUD_ALERTS : concerns
 
-Le projet met en œuvre :
+    CUSTOMERS {
+        bigint customer_id PK
+        varchar first_name
+        varchar last_name
+        varchar email UK
+        varchar phone
+        date birth_date
+        varchar kyc_status
+        varchar risk_level
+        timestamptz created_at
+    }
 
-- Des rôles distincts pour l'analyse, le support, l'application et l'audit.
-- La vue `core.v_customers_masked` pour limiter l'exposition des informations personnelles.
-- La vue `core.v_customer_kyc`, qui encadre les mises à jour autorisées du statut KYC.
-- La journalisation des modifications sur les tables sensibles.
-- La protection des transactions enregistrées contre les modifications et suppressions.
-- Une procédure de virement `core.execute_transfer` configurée avec `SECURITY DEFINER`, un `search_path` explicite et des droits d'exécution contrôlés.
+    ACCOUNTS {
+        bigint account_id PK
+        bigint customer_id FK
+        varchar iban UK
+        varchar account_type
+        numeric balance
+        varchar status
+        timestamptz opened_at
+    }
 
-## Virements et détection de fraude
+    TRANSFERS {
+        bigint transfer_id PK
+        bigint from_account_id FK
+        bigint to_account_id FK
+        numeric amount
+        text label
+        timestamptz created_at
+    }
+
+    TRANSACTIONS {
+        bigint tx_id PK
+        bigint account_id FK
+        varchar tx_type
+        numeric amount
+        numeric balance_after
+        bigint transfer_id FK
+        timestamptz created_at
+    }
+
+    FRAUD_ALERTS {
+        bigint alert_id PK
+        bigint account_id FK
+        bigint tx_id FK
+        varchar rule_code
+        varchar status
+        timestamptz created_at
+    }
+
+    AUDIT_LOG {
+        bigint log_id PK
+        text table_name
+        varchar operation
+        jsonb old_data
+        jsonb new_data
+        text db_user
+        timestamptz changed_at
+    }
+
+```
+
+Le schéma représente les principales relations métier. `audit.audit_log` conserve les événements d'audit ; il n'a pas de relation métier directe avec les tables de `core`.
+
+## 5. Rôles et permissions
+
+| Groupe | Fonction | Accès prévu |
+|---|---|---|
+| `analyst` | Analyse | Lecture des tables de `core` et de la vue matérialisée |
+| `support` | Support client | Lecture des vues autorisées et mise à jour du statut KYC via la vue dédiée |
+| `app` | Application | Exécution de la procédure de virement, sans accès direct aux tables métier |
+| `auditor` | Audit | Lecture du journal `audit.audit_log` |
+
+Comptes de connexion :
+
+- `analyst_user` appartient à `analyst`.
+- `support_user` appartient à `support`.
+- `app_user` appartient à `app`.
+- `auditor_user` appartient à `auditor`.
+
+Les mots de passe sont configurés séparément avec `\password` et ne doivent pas être enregistrés en clair dans les fichiers SQL versionnés.
+
+## 6. Sécurité et règles métier
+
+### Vues
+
+- `core.v_customers_masked` masque une partie des données personnelles.
+- `core.v_customer_kyc` limite les modifications aux statuts KYC autorisés par la vue et son `CHECK OPTION`.
+- `core.mv_account_summary` résume les comptes par type et statut. Son index unique permet le rafraîchissement concurrent.
+
+### Audit et journal comptable
+
+- Les déclencheurs d'audit enregistrent les opérations sensibles.
+- Le journal `core.transactions` est protégé contre `UPDATE`, `DELETE` et `TRUNCATE`.
+- Les déclencheurs de fraude repèrent les retraits importants et les virements sortants fréquents.
+
+### Virements
 
 La procédure `core.execute_transfer` :
 
-- Vérifie les paramètres et l'existence des comptes.
-- Verrouille les comptes concernés pour limiter les conflits concurrents.
-- Contrôle le solde disponible.
-- Enregistre le virement et ses deux écritures comptables associées.
+- Vérifie le montant et les comptes concernés.
+- Verrouille les comptes dans un ordre déterministe.
+- Vérifie le solde disponible.
+- Enregistre le virement et ses deux écritures comptables.
+- Utilise `SECURITY DEFINER` et un `search_path` explicite.
 
-Les déclencheurs permettent également :
+## 7. Installation et reconstruction
 
-- De mettre à jour le solde d'un compte après l'insertion d'une transaction.
-- De détecter les retraits d'au moins 5 000 €.
-- De détecter au moins cinq virements sortants sur une période de dix minutes.
+Depuis le répertoire du projet :
 
-## Installation
+```bash
+# Installer et configurer PostgreSQL
+sudo ./scripts/01_install_postgresql.sh
 
-Le script d'installation PostgreSQL se trouve dans `scripts/01_install_postgresql.sh`.
+# Vérifier la syntaxe du script de reconstruction
+bash -n scripts/00_tout_refaire.sh
+```
 
-Les scripts du dossier `sql/` sont numérotés pour suivre les étapes de construction de la base. Ils doivent être exécutés dans l'ordre approprié, en tenant compte des dépendances et des prérequis de chaque script.
+Une reconstruction supprime la base `bankdb` et les rôles du projet. **Elle détruit les données existantes.** Vérifier le script et les sauvegardes avant de continuer.
 
-Avant de rejouer les scripts de création ou de chargement, vérifier leur contenu et utiliser un environnement de test adapté.
+Lorsque le script a été entièrement vérifié, la reconstruction se lance avec :
 
-## Vérifications réalisées
+```bash
+sudo ./scripts/00_tout_refaire.sh
+```
 
-Les tests effectués pendant le développement ont porté notamment sur :
+Le script demande de saisir `RECONSTRUIRE` avant de supprimer la base. Il rejoue ensuite les scripts SQL numérotés dans l'ordre.
 
-- Les permissions des rôles.
-- Le masquage des informations clients.
-- Les restrictions de mise à jour de la vue KYC.
-- La journalisation des modifications.
-- Le refus de modification du registre des transactions.
-- Les règles de détection de fraude.
-- Les virements valides et les cas d'erreur.
-- La configuration de sécurité de la procédure de virement.
+Après la reconstruction, configurer les mots de passe des comptes de connexion avec `\password` dans `psql`, sans placer de secrets dans le dépôt.
 
-Les opérations temporaires utilisées pour certains tests ont été annulées avec `ROLLBACK` afin de ne pas conserver leurs effets.
+## 8. Tests et validation
 
-## Livrables
+Les vérifications doivent couvrir :
 
-- Scripts SQL de création et de configuration.
-- Script Bash d'installation PostgreSQL.
-- Documentation du projet.
-- Captures d'écran du terminal à ajouter pour illustrer les vérifications et les résultats obtenus.
+- Les contraintes des tables et la cohérence des données.
+- Les permissions de chaque rôle et les accès interdits.
+- Le masquage des informations et les limites de la vue KYC.
+- Les événements d'audit.
+- Le refus de `UPDATE`, `DELETE` et `TRUNCATE` sur le journal comptable.
+- Les alertes de fraude, avec cas positifs et négatifs.
+- Les virements valides et les erreurs attendues.
+- Les index, les plans `EXPLAIN (ANALYZE, BUFFERS)` et les tailles des relations.
+- Le rafraîchissement concurrent de la vue matérialisée.
+- Une sauvegarde au format custom avec `pg_dump -Fc`, suivie d'une restauration avec `pg_restore` dans une base temporaire et d'une comparaison des nombres de lignes.
+
+Les résultats définitifs doivent être documentés à partir des commandes réellement exécutées.
+
+## 9. Captures d'écran
+
+Les captures présentes dans `captures/` documentent les premières vérifications :
+
+1. `01-tables-core.png` — tables du schéma principal.
+2. `02-roles-postgresql.png` — rôles PostgreSQL.
+3. `03-permissions-tables.png` — permissions.
+4. `04-audit-log.png` — journal d'audit.
+5. `05-transactions-triggers.png` — transactions et déclencheurs.
+6. `06-vues-securite.png` — vues et sécurité.
+7. `07-procedure-virement.png` — procédure de virement.
+8. `08-securite-procedure.png` — tests de sécurité de la procédure.
+
+Les nouvelles preuves de performance, de restauration et des tests complémentaires seront ajoutées après leur exécution.
+
+## 10. Utilisation de l'intelligence artificielle
+
+Une assistance par IA a été utilisée pour expliquer les concepts PostgreSQL, proposer et relire des scripts, diagnostiquer des erreurs et organiser les vérifications. Les commandes et les résultats doivent être contrôlés dans l'environnement de travail avant d'être présentés comme validés.
+
+## 11. Livrables
+
+- Scripts SQL numérotés.
+- Scripts Bash d'installation et de reconstruction.
+- README et schéma relationnel.
+- Captures d'écran des vérifications.
+- Résultats des tests, mesures de performance et preuve de restauration.

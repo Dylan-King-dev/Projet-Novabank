@@ -1,4 +1,10 @@
+
 CREATE ROLE analyst NOLOGIN;
 CREATE ROLE support NOLOGIN;
 CREATE ROLE app NOLOGIN;
 CREATE ROLE auditor NOLOGIN;
+
+CREATE ROLE analyst_user LOGIN IN ROLE analyst;
+CREATE ROLE support_user LOGIN IN ROLE support;
+CREATE ROLE app_user LOGIN IN ROLE app;
+CREATE ROLE auditor_user LOGIN IN ROLE auditor;
